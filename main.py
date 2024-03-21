@@ -15,10 +15,37 @@
 
 from mqtt_as import MQTTClient
 from mqtt_local import config
+import time
 import uasyncio as asyncio
 import dht, machine
+import ubinascii
+from collections import OrderedDict
+import json
+import btree
+
+
+setpoint=30
+modo=0
+periodo=3
+
+CLIENT_ID=ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 
 d = dht.DHT22(machine.Pin(13))
+
+try:
+    f = open("mydb", "r+b")
+except OSError:
+    f = open("mydb", "w+b")
+
+db = btree.open(f)
+
+db[b"Setpoint"] = setpoint
+db[b"Modo"] = modo
+db[b"Periodo"] = periodo
+
+
+datos=json.load(open("datos.json"))
+
 
 def sub_cb(topic, msg, retained):
     print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
@@ -29,8 +56,17 @@ async def wifi_han(state):
 
 # If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe('temperatura', 1)
-    await client.subscribe('humedad', 1)
+    await client.subscribe(f"{CLIENT_ID}", 1)
+
+
+def transmitir(pin):
+    print("publicando")
+    client.publish(f"{CLIENT_ID}", datos, qos = 1)
+
+
+publicar = machine.Timer(0)
+publicar.init(period=30000, mode=machine.Timer.PERIODIC, callback=transmitir)
+
 
 async def main(client):
     await client.connect()
@@ -39,16 +75,15 @@ async def main(client):
     while True:
         try:
             d.measure()
-            try:
-                temperatura=d.temperature()
-                await client.publish('temperatura', '{}'.format(temperatura), qos = 1)
-            except OSError as e:
-                print("sin sensor temperatura")
-            try:
-                humedad=d.humidity()
-                await client.publish('humedad', '{}'.format(humedad), qos = 1)
-            except OSError as e:
-                print("sin sensor humedad")
+            temperatura=d.temperature()
+            humedad=d.humidity()
+            datos = json.dumps(OrderedDict([
+            ('temperatura',temperatura),
+            ('humedad',humedad),
+            ('modo',0),
+            ('periodo',30000),
+            ('rele',0)
+            ]))            
         except OSError as e:
             print("sin sensor")
         await asyncio.sleep(20)  # Broker is slow
