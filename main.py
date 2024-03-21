@@ -19,6 +19,8 @@ import uasyncio as asyncio
 
 SERVER = config['server']
 
+#subscribe topic, en c y r lo q recibe y lo imprime.
+#esta funcion es bloqueante, no puede dejar de escuchar el medio cuando recibe un mensaje.
 def sub_cb(topic, msg, retained):
     c, r = [int(x) for x in msg.decode().split(' ')]
     print('Topic = {} Count = {} Retransmissions = {} Retained = {}'.format(topic.decode(), c, r, retained))
@@ -29,7 +31,7 @@ async def wifi_han(state):
 
 # If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe('result', 1)
+    await client.subscribe('result_fabri', 1)
 
 async def main(client):
     await client.connect()
@@ -38,7 +40,7 @@ async def main(client):
     while True:
         print('publish', n)
         # If WiFi is down the following will pause for the duration.
-        await client.publish('result', '{} {}'.format(n, client.REPUB_COUNT), qos = 1)
+        await client.publish('result_fabri', '{} {}'.format(n, client.REPUB_COUNT), qos = 1)
         n += 1
         await asyncio.sleep(10)  # Broker is slow
 
