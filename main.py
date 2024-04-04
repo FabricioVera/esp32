@@ -16,13 +16,20 @@
 from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
-import dht, machine, json
+import dht, machine
 from collections import OrderedDict
+import ujson as json
+import ubinascii
+import btree
+import time
+from machine import Timer
+import settings
 
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 d = dht.DHT22(machine.Pin(13))
 pin_rele = dht.DHT22(machine.Pin(36))
 pin_led = dht.DHT22(machine.Pin(2))
+
 
 setpoint=40
 #modo automatico = TRUE, MANUAL = FALSE
@@ -31,7 +38,9 @@ modo=True
 periodo=30000
 #rele empieza apagado
 rele_estado=False
+datos={}
 
+## base de datos
 try:
     f = open("mydb", "r+b")
 except OSError:
@@ -46,7 +55,12 @@ db[b"Rele Estado"] = str(rele_estado)
 
 db.flush()
 
-datos=json.load(open("datos.json"))
+
+def transmitir(pin):
+    print(f"publicando en {CLIENT_ID}")
+    client.connect()
+    client.publish(f"CLIENT_ID","hola")
+    client.disconnect()
 
 
 def sub_cb(topic, msg, retained):
@@ -58,12 +72,19 @@ async def wifi_han(state):
 
 # If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe(config['client_id'], 1)
+    await client.subscribe(f"CLIENT_ID", 1)
 
 async def main(client):
     await client.connect()
+
+    for coroutine in (up, messages):
+        asyncio.create_task(coroutine(client))
+    
     n = 0
-    await asyncio.sleep(2)  # Give broker time
+    await asyncio.sleep(10)  # Give broker time
+
+    await client.publish(f"CLIENT_ID","inciiando", qos = 1)
+    
     while True:
         try:
             d.measure()
@@ -77,7 +98,8 @@ async def main(client):
                 ('periodo', periodo),
                 ('setpoint', setpoint)
                 ]))
-            await client.publish(config['client_id'], datos, qos = 1)
+            print(datos)
+            await client.publish(CLIENT_ID,"hola")
         except OSError as e:
             print("sin sensor temperatura")
         if modo == True:
@@ -97,30 +119,43 @@ async def main(client):
 timer_publicar=Timer(0)
 timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
 
-async def recibir_msg():
+
+
+async def up(client):  # Respond to connectivity being (re)established
+    while True:
+        await client.up.wait()  # Wait on an Event
+        client.up.clear()
+        await client.subscribe(f'{CLIENT_ID}/temperatura', 1)  # renew subscriptions
+        await client.subscribe(f'{CLIENT_ID}/humedad', 1)  # renew subscriptions
+        await client.subscribe(f'{CLIENT_ID}/rele', 1)  # renew subscriptions
+        await client.subscribe(f'{CLIENT_ID}/modo', 1)  # renew subscriptions
+        await client.subscribe(f'{CLIENT_ID}/periodo', 1)  # renew subscriptions
+        await client.subscribe(f'{CLIENT_ID}/destello', 1)  # renew subscriptions
+
+async def messages():
     async for topic, msg, retained in client.queue:
-        if topic == config['client_id']+"/periodo":
+        if topic == f"{CLIENT_ID}/periodo":
             periodo = int(msg)
             timer_publicar=Timer(0)
             timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
         
-        if topic == config['client_id']+"/setpoint":
+        if topic == f"{CLIENT_ID}/setpoint":
             setpoint = int(msg)
 
-        if topic == config['client_id']+"/modo":
+        if topic == f"{CLIENT_ID}/modo":
             if msg == "auto":
                 modo = True
             elif msg == "manual":
                 modo = False
             print(f"modo = {msg}")
 
-        if topic == config['client_id']+"/rele":
+        if topic == f"{CLIENT_ID}/rele":
             if msg == "on":
                 rele_estado = True
             elif msg == "off":
                 rele_estado = False
 
-        if topic == config['client_id']+"/destello":
+        if topic == f"{CLIENT_ID}/destello":
             if msg == "on":
                 destello()
 
@@ -133,6 +168,8 @@ async def destello():
 
 
 
+config["queue_len"] = 1  # Use event interface with default queue size
+MQTTClient.DEBUG = False  # Optional: print diagnostic messages
 # Define configuration
 config['subs_cb'] = sub_cb
 config['connect_coro'] = conn_han
