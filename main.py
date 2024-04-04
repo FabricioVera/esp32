@@ -15,22 +15,22 @@
 
 from mqtt_as import MQTTClient
 from mqtt_local import config
-import time
 import uasyncio as asyncio
-import dht, machine
-import ubinascii
+import dht, machine, json
 from collections import OrderedDict
-import json
-import btree
 
-
-setpoint=30
-modo=0
-periodo=3
-
-CLIENT_ID=ubinascii.hexlify(machine.unique_id()).decode('utf-8')
-
+CLIENT_ID = ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 d = dht.DHT22(machine.Pin(13))
+pin_rele = dht.DHT22(machine.Pin(36))
+pin_led = dht.DHT22(machine.Pin(2))
+
+setpoint=40
+#modo automatico = TRUE, MANUAL = FALSE
+modo=True
+#periodo en ms
+periodo=30000
+#rele empieza apagado
+rele_estado=False
 
 try:
     f = open("mydb", "r+b")
@@ -39,10 +39,12 @@ except OSError:
 
 db = btree.open(f)
 
-db[b"Setpoint"] = setpoint
-db[b"Modo"] = modo
-db[b"Periodo"] = periodo
+db[b"Setpoint"] = str(setpoint)
+db[b"Modo"] = str(modo)
+db[b"Periodo"] = str(periodo)
+db[b"Rele Estado"] = str(rele_estado)
 
+db.flush()
 
 datos=json.load(open("datos.json"))
 
@@ -56,17 +58,7 @@ async def wifi_han(state):
 
 # If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe(f"{CLIENT_ID}", 1)
-
-
-def transmitir(pin):
-    print("publicando")
-    client.publish(f"{CLIENT_ID}", datos, qos = 1)
-
-
-publicar = machine.Timer(0)
-publicar.init(period=30000, mode=machine.Timer.PERIODIC, callback=transmitir)
-
+    await client.subscribe(config['client_id'], 1)
 
 async def main(client):
     await client.connect()
@@ -77,16 +69,69 @@ async def main(client):
             d.measure()
             temperatura=d.temperature()
             humedad=d.humidity()
-            datos = json.dumps(OrderedDict([
-            ('temperatura',temperatura),
-            ('humedad',humedad),
-            ('modo',0),
-            ('periodo',30000),
-            ('rele',0)
-            ]))            
+            
+            datos=json.dumps(OrderedDict([
+                ('temperatura',temperatura),
+                ('humedad',humedad),
+                ('modo', modo),
+                ('periodo', periodo),
+                ('setpoint', setpoint)
+                ]))
+            await client.publish(config['client_id'], datos, qos = 1)
         except OSError as e:
-            print("sin sensor")
-        await asyncio.sleep(20)  # Broker is slow
+            print("sin sensor temperatura")
+        if modo == True:
+            if temperatura>setpoint:
+                rele_estado=True
+            else:
+                rele_estado=False
+
+        pin_rele.value(rele_estado)
+
+        db[b"Temperatura"] = str(temperatura)
+        db[b"Humedad"] = str(humedad)
+        db[b"Rele Estado"] = str(rele_estado)
+        db.flush()
+        await asyncio.sleep(180)  # Broker is slow
+
+timer_publicar=Timer(0)
+timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
+
+async def recibir_msg():
+    async for topic, msg, retained in client.queue:
+        if topic == config['client_id']+"/periodo":
+            periodo = int(msg)
+            timer_publicar=Timer(0)
+            timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
+        
+        if topic == config['client_id']+"/setpoint":
+            setpoint = int(msg)
+
+        if topic == config['client_id']+"/modo":
+            if msg == "auto":
+                modo = True
+            elif msg == "manual":
+                modo = False
+            print(f"modo = {msg}")
+
+        if topic == config['client_id']+"/rele":
+            if msg == "on":
+                rele_estado = True
+            elif msg == "off":
+                rele_estado = False
+
+        if topic == config['client_id']+"/destello":
+            if msg == "on":
+                destello()
+
+async def destello():
+    pin_led.value(True)
+    await asyncio.sleep(200)
+    pin_led.value(False)
+    await asyncio.sleep(200)
+
+
+
 
 # Define configuration
 config['subs_cb'] = sub_cb
