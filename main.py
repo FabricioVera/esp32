@@ -13,6 +13,7 @@
 # red LED: ON == WiFi fail
 # green LED heartbeat: demonstrates scheduler is running.
 
+
 from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
@@ -59,9 +60,8 @@ db.flush()
 def transmitir(pin):
     print(f"publicando en {CLIENT_ID}")
     client.connect()
-    client.publish(f"CLIENT_ID","hola")
+    client.publish(f"CLIENT_ID",datos, qos = 1)
     client.disconnect()
-
 
 def sub_cb(topic, msg, retained):
     print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
@@ -79,9 +79,8 @@ async def main(client):
 
     for coroutine in (up, messages):
         asyncio.create_task(coroutine(client))
-    
-    n = 0
-    await asyncio.sleep(10)  # Give broker time
+
+    await asyncio.sleep(2)  # Give broker time
 
     await client.publish(f"CLIENT_ID","inciiando", qos = 1)
     
@@ -168,8 +167,6 @@ async def destello():
 
 
 
-config["queue_len"] = 1  # Use event interface with default queue size
-MQTTClient.DEBUG = False  # Optional: print diagnostic messages
 # Define configuration
 config['subs_cb'] = sub_cb
 config['connect_coro'] = conn_han
@@ -179,8 +176,10 @@ config['ssl'] = True
 # Set up client
 MQTTClient.DEBUG = True  # Optional
 client = MQTTClient(config)
+
 try:
     asyncio.run(main(client))
 finally:
     client.close()
     asyncio.new_event_loop()
+
