@@ -1,17 +1,3 @@
-# (C) Copyright Peter Hinch 2017-2019.
-# Released under the MIT licence.
-
-# This demo publishes to topic "result" and also subscribes to that topic.
-# This demonstrates bidirectional TLS communication.
-# You can also run the following on a PC to verify:
-# mosquitto_sub -h test.mosquitto.org -t result
-# To get mosquitto_sub to use a secure connection use this, offered by @gmrza:
-# mosquitto_sub -h <my local mosquitto server> -t result -u <username> -P <password> -p 8883
-
-# Public brokers https://github.com/mqtt/mqtt.github.io/wiki/public_brokers
-
-# red LED: ON == WiFi fail
-# green LED heartbeat: demonstrates scheduler is running.
 
 
 from mqtt_as import MQTTClient
@@ -29,9 +15,9 @@ import settings
 CLIENT_ID = ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 
 # configuracion de pines... Sensor, rele, led
-d = dht.DHT22(machine.Pin(13))
-pin_rele = dht.DHT22(machine.Pin(36))
-pin_led = dht.DHT22(machine.Pin(2))
+d = dht.DHT22(machine.Pin(25))
+pin_rele = machine.Pin(12, machine.Pin.OUT)
+pin_led = machine.Pin(2, machine.Pin.OUT)
 
 
 setpoint=40
@@ -42,6 +28,9 @@ periodo=3000
 #rele empieza apagado, es activo en bajo
 rele_estado=True
 datos={}
+# bandera para transmitir
+bandtransmitir = False
+
 
 ## base de datos
 try:
@@ -60,10 +49,7 @@ db.flush()
 
 
 def transmitir(pin):
-    print(f"publicando en {CLIENT_ID}")
-    client.connect()
-    client.publish(f"CLIENT_ID",datos, qos = 1)
-    client.disconnect()
+    bandtransmitir = True
 
 timer_publicar=Timer(0)
 timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
@@ -89,8 +75,10 @@ def sub_cb(topic, msg, retained):
     if topic.decode() == f"{CLIENT_ID}/rele":
         if msg == "on":
             rele_estado = False
+            db[b"Rele Estado"] = str(rele_estado)
         elif msg == "off":
             rele_estado = True
+            db[b"Rele Estado"] = str(rele_estado)
 
     if topic.decode() == f"{CLIENT_ID}/destello":
         if msg == "on":
@@ -109,9 +97,9 @@ async def conn_han(client):
     await client.subscribe(f'{CLIENT_ID}/destello', 1) 
 
 async def main(client):
-
+    await client.connect()
     await asyncio.sleep(2)  # Give broker time
-    
+    bandtransmitir = False
     while True:
         try:
             d.measure()
@@ -133,12 +121,18 @@ async def main(client):
         if modo == True:
             if temperatura>setpoint:
                 rele_estado=False
+                pin_rele.value(0)
+                db[b"Rele Estado"] = str(rele_estado)
             else:
                 rele_estado=True
-
-        pin_rele.value(rele_estado)
-
-        db[b"Rele Estado"] = str(rele_estado)
+                pin_rele.value(1)
+                db[b"Rele Estado"] = str(rele_estado)
+        if bandtransmitir:
+            print(f"publicando en {CLIENT_ID}")
+            await client.publish(f"CLIENT_ID",datos, qos = 1)
+            bandtransmitir=False
+    
+        
         db.flush()
         await asyncio.sleep(180)  # Broker is slow
 
