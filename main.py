@@ -38,7 +38,7 @@ modo=True
 #periodo en ms
 periodo=30000
 #rele empieza apagado
-rele_estado=False
+rele_estado=True
 datos={}
 
 ## base de datos
@@ -103,9 +103,9 @@ async def main(client):
             print("sin sensor temperatura")
         if modo == True:
             if temperatura>setpoint:
-                rele_estado=True
-            else:
                 rele_estado=False
+            else:
+                rele_estado=True
 
         pin_rele.value(rele_estado)
 
@@ -150,9 +150,9 @@ async def messages():
 
         if topic == f"{CLIENT_ID}/rele":
             if msg == "on":
-                rele_estado = True
-            elif msg == "off":
                 rele_estado = False
+            elif msg == "off":
+                rele_estado = True
 
         if topic == f"{CLIENT_ID}/destello":
             if msg == "on":
