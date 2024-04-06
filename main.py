@@ -19,12 +19,16 @@ d = dht.DHT22(machine.Pin(25))
 pin_rele = machine.Pin(12, machine.Pin.OUT)
 pin_led = machine.Pin(2, machine.Pin.OUT)
 
+global periodo
+global bandtransmitir
+global bandestello
 
+bandestello = False
 setpoint=40
 #modo automatico = TRUE, MANUAL = FALSE
 modo=False
 #periodo en ms
-periodo=3000
+periodo=10000
 #rele empieza apagado, es activo en bajo
 rele_estado=True
 datos={}
@@ -49,6 +53,9 @@ db.flush()
 
 
 def transmitir(pin):
+    global bandtransmitir
+    
+    print("Transmite !")
     bandtransmitir = True
 
 timer_publicar=Timer(0)
@@ -56,33 +63,40 @@ timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
 
 
 def sub_cb(topic, msg, retained):
+    global periodo
+    global bandestello
+    global modo
+    global setpoint
+    global periodo
+
     print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
+    mensaje = str(msg.decode())
     if topic.decode() == f"{CLIENT_ID}/periodo":
-            periodo = int(msg)
+            periodo = int(mensaje)
             timer_publicar=Timer(0)
             timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
         
     if topic.decode() == f"{CLIENT_ID}/setpoint":
-        setpoint = int(msg)
+        setpoint = int(mensaje)
 
     if topic.decode() == f"{CLIENT_ID}/modo":
-        if msg == "auto":
+        if mensaje == "auto":
             modo = True
-        elif msg == "manual":
+        elif mensaje == "manual":
             modo = False
-        print(f"modo = {msg}")
+        print(f"modo = {mensaje}")
 
     if topic.decode() == f"{CLIENT_ID}/rele":
-        if msg == "on":
+        if mensaje == "on":
             rele_estado = False
             db[b"Rele Estado"] = str(rele_estado)
-        elif msg == "off":
+        elif mensaje == "off":
             rele_estado = True
             db[b"Rele Estado"] = str(rele_estado)
 
     if topic.decode() == f"{CLIENT_ID}/destello":
-        if msg == "on":
-            destello()
+        if mensaje == "on":
+            bandestello = True
 
 async def wifi_han(state):
     print('Wifi is ', 'up' if state else 'down')
@@ -95,16 +109,23 @@ async def conn_han(client):
     await client.subscribe(f'{CLIENT_ID}/modo', 1) 
     await client.subscribe(f'{CLIENT_ID}/periodo', 1)
     await client.subscribe(f'{CLIENT_ID}/destello', 1) 
+    await client.subscribe(f'{CLIENT_ID}/setpoint', 1) 
 
 async def main(client):
+    global bandtransmitir
+    global modo
+    global setpoint
+    global periodo
+
     await client.connect()
     await asyncio.sleep(2)  # Give broker time
-    bandtransmitir = False
+    # DEBUG
+    bandtransmitir = True #False
     while True:
         try:
-            d.measure()
-            temperatura=d.temperature()
-            humedad=d.humidity()
+            #d.measure()
+            temperatura=0#d.temperature()
+            humedad=100#d.humidity()
             
             datos=json.dumps(OrderedDict([
                 ('temperatura',temperatura),
@@ -129,19 +150,28 @@ async def main(client):
                 db[b"Rele Estado"] = str(rele_estado)
         if bandtransmitir:
             print(f"publicando en {CLIENT_ID}")
-            await client.publish(f"CLIENT_ID",datos, qos = 1)
+            await client.publish(CLIENT_ID ,datos, qos = 1)
             bandtransmitir=False
     
         
         db.flush()
-        await asyncio.sleep(180)  # Broker is slow
+        await asyncio.sleep(2)  # Broker is slow
 
 
 async def destello():
-    pin_led.value(True)
-    await asyncio.sleep(200)
-    pin_led.value(False)
-    await asyncio.sleep(200)
+    global bandestello
+    
+    if bandestello:
+        print("DESTELLO !!!")
+        pin_led.value(True)
+        await asyncio.sleep(1)
+        pin_led.value(False)
+        await asyncio.sleep(1)
+        pin_led.value(True)
+        await asyncio.sleep(1)
+        pin_led.value(False)
+        await asyncio.sleep(1)
+        bandestello = False
 
 
 # Define configuration
