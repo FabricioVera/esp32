@@ -1,5 +1,3 @@
-
-
 from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
@@ -17,18 +15,16 @@ CLIENT_ID = ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 # configuracion de pines... Sensor, rele, led
 d = dht.DHT22(machine.Pin(25))
 pin_rele = machine.Pin(12, machine.Pin.OUT)
+pin_rele.value(1)
 pin_led = machine.Pin(2, machine.Pin.OUT)
+pin_led.value(1)
 
-global periodo
-global bandtransmitir
-global bandestello
 
-bandestello = False
 setpoint=40
 #modo automatico = TRUE, MANUAL = FALSE
 modo=False
-#periodo en ms
-periodo=10000
+#periodo en segundos
+periodo=3.3
 #rele empieza apagado, es activo en bajo
 rele_estado=True
 datos={}
@@ -42,61 +38,58 @@ try:
 except OSError:
     f = open("mydb", "w+b")
 
+#abro la base de datos
 db = btree.open(f)
 
+
+#guardo los datos iniciales
 db[b"Setpoint"] = str(setpoint)
 db[b"Modo"] = str(modo)
 db[b"Periodo"] = str(periodo)
 db[b"Rele Estado"] = str(rele_estado)
 
+#limpio el caché de la base de datos
 db.flush()
 
-
-def transmitir(pin):
-    global bandtransmitir
-    
-    print("Transmite !")
-    bandtransmitir = True
-
-timer_publicar=Timer(0)
-timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
+#funcion para transmitir el json
+async def transmitir(pin):  
+    while True:
+        print(f"publicando en {CLIENT_ID}")
+        await client.publish(CLIENT_ID, datos, qos = 1)
+        await asyncio.sleep(float(db[b"Periodo"]))
 
 
+#funcion para recibir mensajes de los distintos topicos guardando los mensajes en la base de datos
 def sub_cb(topic, msg, retained):
-    global periodo
-    global bandestello
-    global modo
-    global setpoint
-    global periodo
+    topicodecodificado = topic.decode()
+    mensajedecodificado = msg.decode()
+    print('Topic = {} -> Valor = {}'.format(topicodecodificado, mensajedecodificado))
 
-    print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
-    mensaje = str(msg.decode())
-    if topic.decode() == f"{CLIENT_ID}/periodo":
-            periodo = int(mensaje)
-            timer_publicar=Timer(0)
-            timer_publicar.init(period=periodo, mode=Timer.PERIODIC, callback=transmitir)
+    if topicodecodificado == f"{CLIENT_ID}/periodo":
+        db[b"Periodo"] = mensajedecodificado
         
-    if topic.decode() == f"{CLIENT_ID}/setpoint":
-        setpoint = int(mensaje)
+    if topicodecodificado == f"{CLIENT_ID}/setpoint":
+        db[b"Setpoint"] = mensajedecodificado
 
-    if topic.decode() == f"{CLIENT_ID}/modo":
-        if mensaje == "auto":
-            modo = True
-        elif mensaje == "manual":
-            modo = False
-        print(f"modo = {mensaje}")
+    if topicodecodificado == f"{CLIENT_ID}/modo":
+        if mensajedecodificado == "1" or mensajedecodificado == "0":
+            db[b"Modo"] = mensajedecodificado
+        else:
+            print("No existe ese modo!")
 
-    if topic.decode() == f"{CLIENT_ID}/rele":
-        if mensaje == "on":
+    if topicodecodificado == f"{CLIENT_ID}/rele":
+        if mensajedecodificado == "on":
             rele_estado = False
             db[b"Rele Estado"] = str(rele_estado)
-        elif mensaje == "off":
+        elif mensajedecodificado == "off":
             rele_estado = True
             db[b"Rele Estado"] = str(rele_estado)
 
-    if topic.decode() == f"{CLIENT_ID}/destello":
-        if mensaje == "on":
-            bandestello = True
+    if topicodecodificado == f"{CLIENT_ID}/destello":
+        if mensajedecodificado == "on":
+            asyncio.run(destello())
+
+
 
 async def wifi_han(state):
     print('Wifi is ', 'up' if state else 'down')
@@ -112,35 +105,30 @@ async def conn_han(client):
     await client.subscribe(f'{CLIENT_ID}/setpoint', 1) 
 
 async def main(client):
-    global bandtransmitir
-    global modo
-    global setpoint
-    global periodo
-
     await client.connect()
     await asyncio.sleep(2)  # Give broker time
-    # DEBUG
-    bandtransmitir = True #False
+
+
     while True:
         try:
-            #d.measure()
-            temperatura=0#d.temperature()
-            humedad=100#d.humidity()
+            d.measure()
+            temperatura=d.temperature()
+            humedad=d.humidity()
             
             datos=json.dumps(OrderedDict([
                 ('temperatura',temperatura),
                 ('humedad',humedad),
-                ('modo', modo),
-                ('periodo', periodo),
-                ('setpoint', setpoint)
+                ('modo', bool(db.get("Modo"))),
+                ('periodo', float(db.get("Periodo"))),
+                ('setpoint', float(db.get("Setpoint")))
                 ]))
             print(datos)
             db[b"Temperatura"] = str(temperatura)
             db[b"Humedad"] = str(humedad)
         except OSError as e:
             print("sin sensor temperatura")
-        if modo == True:
-            if temperatura>setpoint:
+        if bool(db.get("Modo")) == True:
+            if temperatura>int(db.value("Setpoint")):
                 rele_estado=False
                 pin_rele.value(0)
                 db[b"Rele Estado"] = str(rele_estado)
@@ -148,30 +136,27 @@ async def main(client):
                 rele_estado=True
                 pin_rele.value(1)
                 db[b"Rele Estado"] = str(rele_estado)
-        if bandtransmitir:
-            print(f"publicando en {CLIENT_ID}")
-            await client.publish(CLIENT_ID ,datos, qos = 1)
-            bandtransmitir=False
-    
         
         db.flush()
         await asyncio.sleep(2)  # Broker is slow
 
 
 async def destello():
-    global bandestello
-    
-    if bandestello:
-        print("DESTELLO !!!")
-        pin_led.value(True)
-        await asyncio.sleep(1)
-        pin_led.value(False)
-        await asyncio.sleep(1)
-        pin_led.value(True)
-        await asyncio.sleep(1)
-        pin_led.value(False)
-        await asyncio.sleep(1)
-        bandestello = False
+    print("DESTELLO !!!")
+    pin_led.value(True)
+    await asyncio.sleep(1)
+    pin_led.value(False)
+    await asyncio.sleep(1)
+    pin_led.value(True)
+    await asyncio.sleep(1)
+    pin_led.value(False)
+    await asyncio.sleep(1)
+    bandestello = False
+
+
+
+async def task(client):
+    await asyncio.gather(transmitir(), main(client))
 
 
 # Define configuration
@@ -185,8 +170,10 @@ MQTTClient.DEBUG = True  # Optional
 client = MQTTClient(config)
 
 try:
-    asyncio.run(main(client))
+    asyncio.run(task(client))
 finally:
+    #cierro base de datos
+    db.close()
+    f.close()
     client.close()
     asyncio.new_event_loop()
-
