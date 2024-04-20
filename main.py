@@ -128,7 +128,7 @@ async def main(client):
         except OSError as e:
             print("sin sensor temperatura")
         if bool(db.get("Modo")) == True:
-            if temperatura>int(db.value("Setpoint")):
+            if temperatura>int(db.get("Setpoint")):
                 rele_estado=False
                 pin_rele.value(0)
                 db[b"Rele Estado"] = str(rele_estado)
