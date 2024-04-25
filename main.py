@@ -31,7 +31,7 @@ datos={}
 # bandera para transmitir
 bandtransmitir = False
 
-
+"""
 ## base de datos
 try:
     f = open("mydb", "r+b")
@@ -41,7 +41,6 @@ except OSError:
 #abro la base de datos
 db = btree.open(f)
 
-
 #guardo los datos iniciales
 db[b"Setpoint"] = str(setpoint)
 db[b"Modo"] = str(modo)
@@ -50,13 +49,14 @@ db[b"Rele Estado"] = str(rele_estado)
 
 #limpio el caché de la base de datos
 db.flush()
+"""
 
 #funcion para transmitir el json
 async def transmitir(pin):  
     while True:
         print(f"publicando en {CLIENT_ID}")
         await client.publish(CLIENT_ID, datos, qos = 1)
-        await asyncio.sleep(float(db[b"Periodo"]))
+        await asyncio.sleep(float(leer_db("Periodo")))
 
 
 #funcion para recibir mensajes de los distintos topicos guardando los mensajes en la base de datos
@@ -64,26 +64,25 @@ def sub_cb(topic, msg, retained):
     topicodecodificado = topic.decode()
     mensajedecodificado = msg.decode()
     print('Topic = {} -> Valor = {}'.format(topicodecodificado, mensajedecodificado))
-
     if topicodecodificado == f"{CLIENT_ID}/periodo":
-        db[b"Periodo"] = mensajedecodificado
+        escribir_db("Periodo", mensajedecodificado)
         
     if topicodecodificado == f"{CLIENT_ID}/setpoint":
-        db[b"Setpoint"] = mensajedecodificado
+        escribir_db("Setpoint", mensajedecodificado)
 
     if topicodecodificado == f"{CLIENT_ID}/modo":
         if mensajedecodificado == "1" or mensajedecodificado == "0":
-            db[b"Modo"] = mensajedecodificado
+            escribir_db("Modo", mensajedecodificado)
         else:
             print("No existe ese modo!")
 
     if topicodecodificado == f"{CLIENT_ID}/rele":
         if mensajedecodificado == "on":
             rele_estado = False
-            db[b"Rele Estado"] = str(rele_estado)
+            escribir_db("Rele Estado", mensajedecodificado)
         elif mensajedecodificado == "off":
             rele_estado = True
-            db[b"Rele Estado"] = str(rele_estado)
+            escribir_db("Rele Estado", mensajedecodificado)
 
     if topicodecodificado == f"{CLIENT_ID}/destello":
         if mensajedecodificado == "on":
@@ -107,7 +106,10 @@ async def conn_han(client):
 async def main(client):
     await client.connect()
     await asyncio.sleep(2)  # Give broker time
-
+    escribir_db("Setpoint", str(setpoint))
+    escribir_db("Modo", str(modo))
+    escribir_db("Periodo", str(periodo))
+    escribir_db("Rele Estado", str(rele_estado))
 
     while True:
         try:
@@ -118,24 +120,23 @@ async def main(client):
             datos=json.dumps(OrderedDict([
                 ('temperatura',temperatura),
                 ('humedad',humedad),
-                ('modo', bool(db.get("Modo"))),
-                ('periodo', float(db.get("Periodo"))),
-                ('setpoint', float(db.get("Setpoint")))
+                ('modo', bool(leer_db("Modo"))),
+                ('periodo', float(leer_db("Periodo"))),
+                ('setpoint', float(leer_db("Setpoint")))
                 ]))
             print(datos)
-            db[b"Temperatura"] = str(temperatura)
-            db[b"Humedad"] = str(humedad)
         except OSError as e:
             print("sin sensor temperatura")
-        if bool(db.get("Modo")) == True:
-            if temperatura>int(db.get("Setpoint")):
+        
+        if bool(leer_db("Modo")) == True:
+            if temperatura>float(leer_db("Setpoint")):
                 rele_estado=False
                 pin_rele.value(0)
-                db[b"Rele Estado"] = str(rele_estado)
+                escribir_db("Rele Estado", rele_estado)
             else:
                 rele_estado=True
                 pin_rele.value(1)
-                db[b"Rele Estado"] = str(rele_estado)
+                escribir_db("Rele Estado", rele_estado)
         
         db.flush()
         await asyncio.sleep(2)  # Broker is slow
@@ -152,6 +153,42 @@ async def destello():
     pin_led.value(False)
     await asyncio.sleep(1)
     bandestello = False
+
+def leer_db(parametro):
+    f = open("mydb", "r+b")
+    #abro la base de datos
+    db = btree.open(f)
+    resultado = db.get(parametro)
+    db.flush()
+    db.close()
+    f.close()
+    return resultado
+
+def escribir_db(parametro, valor):
+    f = open("mydb", "w+b")
+    #abro la base de datos
+    db = btree.open(f)
+
+    if parametro == "Periodo":
+        db[b"Periodo"] = valor
+        
+    if parametro == "Setpoint":
+        db[b"Setpoint"] = valor
+        
+    if parametro == "Modo":
+        if valor == "1" or valor == "0":
+            db[b"Modo"] = valor
+
+    if parametro == "Rele Estado":
+        if valor == "on":
+            db[b"Rele Estado"] = str(rele_estado)
+        elif valor == "off":
+            db[b"Rele Estado"] = str(rele_estado)
+
+    db.flush()
+    db.close()
+    f.close()
+
 
 
 
@@ -172,8 +209,5 @@ client = MQTTClient(config)
 try:
     asyncio.run(task(client))
 finally:
-    #cierro base de datos
-    db.close()
-    f.close()
     client.close()
     asyncio.new_event_loop()
