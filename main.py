@@ -18,8 +18,10 @@ from mqtt_local import config
 import uasyncio as asyncio
 import dht, machine, json
 from collections import OrderedDict
+import ubinascii
 
 d = dht.DHT22(machine.Pin(13))
+decodeclientid=ubinascii.hexlify(machine.unique_id()).decode('utf-8')
 
 def sub_cb(topic, msg, retained):
     print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
@@ -47,7 +49,7 @@ async def main(client):
                         ('temperatura',temperatura),
                         ('humedad',humedad)
                     ]))
-                    await client.publish(iot/2024/config['client_id'], datos, qos = 1)
+                    await client.publish(f"iot/2024/{decodeclientid}", datos, qos = 1)
                 except OSError as e:
                     print("sin sensor temperatura")
             except OSError as e:
