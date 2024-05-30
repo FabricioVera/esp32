@@ -33,23 +33,22 @@ pin_rele.value(1)
 pin_led = machine.Pin(2, machine.Pin.OUT)
 pin_led.value(1)
 
-setpoint=40
-#modo automatico = TRUE, MANUAL = FALSE
-modo=False
-#periodo en segundos
-periodo=3.3
-#rele empieza apagado, es activo en bajo
-rele_estado=True
+parametros={
+    'setpoint':26.5,
+    'periodo':3,
+    'modo':True,
+    'rele':True
+    }
+
 datos={}
-# bandera para transmitir
-bandtransmitir = False
+
 
 #funcion para transmitir el json
 #async def transmitir():  
 #    while True:
 #        print(f"publicando en {CLIENT_ID}")
 #        await client.publish(CLIENT_ID, datos, qos = 1)
-#        await asyncio.sleep(float(leer_db("Periodo")))
+#        await asyncio.sleep(parametros["periodo"])
 
 
 def sub_cb(topic, msg, retained):
@@ -57,28 +56,34 @@ def sub_cb(topic, msg, retained):
     mensajedecodificado = msg.decode()
     print('Topic = {} -> Valor = {}'.format(topicodecodificado, mensajedecodificado))
     if topicodecodificado == f"{CLIENT_ID}/periodo":
-        escribir_db("Periodo", mensajedecodificado)
+        print("mensaje deco:" + mensajedecodificado)
+        parametros["periodo"] = int(mensajedecodificado)
+        escribir_db()
         
     if topicodecodificado == f"{CLIENT_ID}/setpoint":
-        escribir_db("Setpoint", mensajedecodificado)
+        parametros["setpoint"] = int(mensajedecodificado)
+        escribir_db()
 
     if topicodecodificado == f"{CLIENT_ID}/modo":
         if mensajedecodificado == "1" or mensajedecodificado == "0":
-            escribir_db("Modo", mensajedecodificado)
+            parametros["modo"] = bool(mensajedecodificado)
+            escribir_db()
         else:
             print("No existe ese modo!")
 
     if topicodecodificado == f"{CLIENT_ID}/rele":
         if mensajedecodificado == "on":
-            rele_estado = False
-            escribir_db("Rele Estado", mensajedecodificado)
+            parametros["rele"] = False
+            pin_rele.value(0)
+            escribir_db()
         elif mensajedecodificado == "off":
-            rele_estado = True
-            escribir_db("Rele Estado", mensajedecodificado)
+            parametros["rele"] = True
+            pin_rele.value(1)
+            escribir_db()
 
     if topicodecodificado == f"{CLIENT_ID}/destello":
         if mensajedecodificado == "on":
-            asyncio.run(destello())
+            asyncio.create_task(destello())
 
 
 async def wifi_han(state):
@@ -98,10 +103,7 @@ async def conn_han(client):
 async def main(client):
     await client.connect()
     await asyncio.sleep(2)  # Give broker time
-    escribir_db("Setpoint", str(setpoint))
-    escribir_db("Modo", str(modo))
-    escribir_db("Periodo", str(periodo))
-    escribir_db("Rele Estado", str(rele_estado))
+    escribir_db()
 
     while True:
         try:
@@ -113,9 +115,10 @@ async def main(client):
                     datos=json.dumps(OrderedDict([
                         ('temperatura',temperatura),
                         ('humedad',humedad),
-                        ('modo', bool(leer_db("Modo"))),
-                        ('periodo', float(leer_db("Periodo"))),
-                        ('setpoint', float(leer_db("Setpoint")))
+                        ('modo', parametros["modo"]),
+                        ('periodo', parametros["periodo"]),
+                        ('setpoint', parametros["setpoint"]),
+                        ('rele estado', parametros["rele"])
                     ]))
                     await client.publish(f"iot/2024/{CLIENT_ID}", datos, qos = 1)
                 except OSError as e:
@@ -125,19 +128,18 @@ async def main(client):
         except OSError as e:
             print("sin sensor")
 
-        if bool(leer_db("Modo")) == True:
-            if temperatura>float(leer_db("Setpoint")):
-                rele_estado=False
+        if parametros["modo"] == True:
+            if temperatura>parametros["setpoint"]:
+                parametros["rele"]=False
                 pin_rele.value(0)
-                escribir_db("Rele Estado", rele_estado)
+                escribir_db()
             else:
-                rele_estado=True
+                parametros["rele"]=True
                 pin_rele.value(1)
-                escribir_db("Rele Estado", rele_estado)
+                escribir_db()
         
-        db.flush()
 
-        await asyncio.sleep(5)  # Broker is slow
+        await asyncio.sleep(parametros["periodo"]) 
 
 
 async def destello():
@@ -153,39 +155,29 @@ async def destello():
     bandestello = False
 
 def leer_db(parametro):
-    f = open("mydb", "r+b")
-    #abro la base de datos
-    db = btree.open(f)
-    resultado = db.get(parametro)
-    db.flush()
-    db.close()
-    f.close()
+    with open("mydb", "r+b") as f:
+        db = btree.open(f)
+        resultado = db[parametro].decode()
+        db.flush()
+        db.close()
     return resultado
 
-def escribir_db(parametro, valor):
-    f = open("mydb", "w+b")
-    #abro la base de datos
-    db = btree.open(f)
-
-    if parametro == "Periodo":
-        db[b"Periodo"] = valor
+def escribir_db():
+    with open("mydb", "w+b") as f:
+        db = btree.open(f)
+        print("Escribiendo")
+        db[b"Periodo"] = b"{}".format(str(parametros["periodo"]))
+            
         
-    if parametro == "Setpoint":
-        db[b"Setpoint"] = valor
-        
-    if parametro == "Modo":
-        if valor == "1" or valor == "0":
-            db[b"Modo"] = valor
+        db[b"Setpoint"] = b"{}".format(str(parametros["setpoint"]))
+            
+        db[b"Modo"] = b"{}".format(str(parametros["modo"]))
 
-    if parametro == "Rele Estado":
-        if valor == "on":
-            db[b"Rele Estado"] = str(rele_estado)
-        elif valor == "off":
-            db[b"Rele Estado"] = str(rele_estado)
+        db[b"Rele"] = b"{}".format(str(parametros["rele"]))
 
-    db.flush()
-    db.close()
-    f.close()
+        db.flush()
+        db.close()
+
 
 
 #async def task(client):
