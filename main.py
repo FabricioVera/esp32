@@ -31,7 +31,7 @@ d = dht.DHT22(machine.Pin(13))
 pin_rele = machine.Pin(12, machine.Pin.OUT)
 pin_rele.value(1)
 pin_led = machine.Pin(2, machine.Pin.OUT)
-pin_led.value(1)
+pin_led.value(0)
 
 parametros={
     'setpoint':26.5,
@@ -44,34 +44,35 @@ datos={}
 
 
 #funcion para transmitir el json
-#async def transmitir():  
-#    while True:
-#        print(f"publicando en {CLIENT_ID}")
-#        await client.publish(CLIENT_ID, datos, qos = 1)
-#        await asyncio.sleep(parametros["periodo"])
+async def transmitir_estado_led():  
+    print(f"publicando en {CLIENT_ID}/estado")
+    valor_led=str(bool(pin_led.value())).lower()
+    await client.publish(f"sensores_remotos/{CLIENT_ID}/estado", valor_led, qos = 1)
+
 
 
 def sub_cb(topic, msg, retained):
     topicodecodificado = topic.decode()
     mensajedecodificado = msg.decode()
     print('Topic = {} -> Valor = {}'.format(topicodecodificado, mensajedecodificado))
-    if topicodecodificado == f"{CLIENT_ID}/periodo":
+
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/periodo":
         print("mensaje deco:" + mensajedecodificado)
         parametros["periodo"] = int(mensajedecodificado)
         escribir_db()
         
-    if topicodecodificado == f"{CLIENT_ID}/setpoint":
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/setpoint":
         parametros["setpoint"] = int(mensajedecodificado)
         escribir_db()
 
-    if topicodecodificado == f"{CLIENT_ID}/modo":
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/modo":
         if mensajedecodificado == "1" or mensajedecodificado == "0":
             parametros["modo"] = bool(mensajedecodificado)
             escribir_db()
         else:
             print("No existe ese modo!")
 
-    if topicodecodificado == f"{CLIENT_ID}/rele":
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/rele":
         if mensajedecodificado == "on":
             parametros["rele"] = False
             pin_rele.value(0)
@@ -81,10 +82,20 @@ def sub_cb(topic, msg, retained):
             pin_rele.value(1)
             escribir_db()
 
-    if topicodecodificado == f"{CLIENT_ID}/destello":
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/destello":
         if mensajedecodificado == "on":
             asyncio.create_task(destello())
 
+    if topicodecodificado == f"sensores_remotos/{CLIENT_ID}/orden":
+        print("mensaje deco:" + mensajedecodificado)
+        if mensajedecodificado=='true':
+            print("encendiendo LED")
+            pin_led.value(1)
+        else:
+            print("apagando LED")
+            pin_led.value(0)
+        asyncio.create_task(transmitir_estado_led())
+        
 
 async def wifi_han(state):
     print('Wifi is ', 'up' if state else 'down')
@@ -92,13 +103,14 @@ async def wifi_han(state):
 
 # If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe(f'{CLIENT_ID}/temperatura', 1)  
-    await client.subscribe(f'{CLIENT_ID}/humedad', 1)  
-    await client.subscribe(f'{CLIENT_ID}/rele', 1)  
-    await client.subscribe(f'{CLIENT_ID}/modo', 1) 
-    await client.subscribe(f'{CLIENT_ID}/periodo', 1)
-    await client.subscribe(f'{CLIENT_ID}/destello', 1) 
-    await client.subscribe(f'{CLIENT_ID}/setpoint', 1) 
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/temperatura', 1)  
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/humedad', 1)  
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/rele', 1)  
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/modo', 1) 
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/periodo', 1)
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/destello', 1) 
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/setpoint', 1) 
+    await client.subscribe(f'sensores_remotos/{CLIENT_ID}/orden', 1) 
 
 async def main(client):
     await client.connect()
@@ -120,7 +132,7 @@ async def main(client):
                         ('setpoint', parametros["setpoint"]),
                         ('rele estado', parametros["rele"])
                     ]))
-                    await client.publish(f"iot/2024/{CLIENT_ID}", datos, qos = 1)
+                    await client.publish(f"sensores_remotos/{CLIENT_ID}", datos, qos = 1)
                 except OSError as e:
                     print("sin sensor temperatura")
             except OSError as e:
